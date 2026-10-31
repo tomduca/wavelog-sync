@@ -162,3 +162,13 @@ corrida espera hasta 10 minutos; si nadie se loguea, los QSOs quedan `pendiente`
   pueden dejar de funcionar y hay que ajustar los selectores en `wavelog_sync.py`.
 - La API de Wavelog no filtra por fecha: se descarga el log completo en cada corrida y se
   filtra localmente (unos pocos MB, alrededor de un segundo).
+
+## Aviso
+
+Este proyecto no está afiliado a QRZ.com, LogDeArgentina ni Wavelog. La parte de QRZ maneja
+su web con un navegador automatizado; usalo con moderación y bajo tu responsabilidad,
+respetando los términos de uso de cada servicio.
+
+## Licencia
+
+[MIT](LICENSE)
