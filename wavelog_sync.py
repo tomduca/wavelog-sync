@@ -171,7 +171,6 @@ def faltantes(c):
         "QSO_DATE": "fecha",
         "TIME_ON": "hora",
         "CALL": "señal distintiva",
-        "GRIDSQUARE": "grid locator",
         "CQZ": "cq zone",
         "ITUZ": "itu zone",
     }

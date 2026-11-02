@@ -10,9 +10,10 @@ correcciones se hacen manejando la web de QRZ con Playwright, con una sesión in
 ## Qué hace
 
 1. **Descarga** el log de Wavelog por API (`api/get_contacts_adif`), una llamada por estación.
-2. **Valida** cada QSO: fecha, hora, indicativo, grid, zona CQ y zona ITU obligatorios; para
-   corresponsales de Argentina, además, la provincia (`STATE`). Los incompletos se informan y
-   se reintentan solos en la próxima corrida, cuando los completes en Wavelog.
+2. **Valida** cada QSO: fecha, hora, indicativo, zona CQ y zona ITU obligatorios (el grid no:
+   si falta, se sube igual y la corrección del paso 6 lo completa en QRZ cuando el corresponsal
+   confirma); para corresponsales de Argentina, además, la provincia (`STATE`). Los incompletos
+   se informan y se reintentan solos en la próxima corrida, cuando los completes en Wavelog.
 3. **Compara** contra un registro local y arma un ADIF con lo que falta subir a cada destino.
 4. **Sube a LdA** por su API, un QSO por llamada (`subeqso2.php`).
 5. **Sube a QRZ** importando el ADIF desde la web del logbook.
