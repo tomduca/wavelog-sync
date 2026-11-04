@@ -24,22 +24,35 @@ Sólo se consideran QSOs posteriores a `SYNC_DESDE`, para no subir el log histó
 
 ## Requisitos
 
-- macOS o Linux con `python3` (3.10 o más nuevo) y `bash`.
+- macOS, Linux o Windows con Python 3.10 o más nuevo. En Windows, al instalar Python desde
+  [python.org](https://www.python.org/downloads/windows/) marcá *Add python.exe to PATH*.
 - Una instancia de Wavelog con una API key (alcanza con una de sólo lectura).
 - Cuenta de LogDeArgentina y cuenta de QRZ.com (la gratuita sirve).
 
 ## Instalación
 
+macOS / Linux:
+
 ```bash
-git clone <url-del-repo> wavelog-sync
+git clone https://github.com/tomduca/wavelog-sync.git
 cd wavelog-sync
 cp .env.example .env      # y completarlo (ver Configuración)
 ./wavelog-sync.sh --estaciones
 ```
 
-`wavelog-sync.sh` crea el entorno virtual (`.venv`), instala las dependencias y el Chromium de
-Playwright la primera vez (y cuando cambia `requirements.txt`), y después corre
-`wavelog_sync.py` con los argumentos que le pases.
+Windows (en `cmd` o PowerShell; después de copiarlo, completar `.env`):
+
+```bat
+git clone https://github.com/tomduca/wavelog-sync.git
+cd wavelog-sync
+copy .env.example .env
+.\wavelog-sync.bat --estaciones
+```
+
+Los lanzadores (`wavelog-sync.sh` y `wavelog-sync.bat`) crean el entorno virtual (`.venv`),
+instalan las dependencias y el Chromium de Playwright la primera vez (y cuando cambia
+`requirements.txt`), y después corren `wavelog_sync.py` con los argumentos que les pases.
+En los ejemplos de abajo, en Windows reemplazá `./wavelog-sync.sh` por `.\wavelog-sync.bat`.
 
 ## Configuración (`.env`)
 
@@ -140,7 +153,8 @@ Los ADIF generados quedan en `exports/`.
 | Ruta | Contenido | En git |
 |---|---|---|
 | `wavelog_sync.py` | el programa | sí |
-| `wavelog-sync.sh` | lanzador con manejo del venv | sí |
+| `wavelog-sync.sh` | lanzador para macOS / Linux, con manejo del venv | sí |
+| `wavelog-sync.bat` | lanzador para Windows, con manejo del venv | sí |
 | `.env.example` | plantilla de configuración | sí |
 | `.env` | tu configuración y credenciales | **no** |
 | `estado/` | registro de subidas y perfil del navegador con la sesión de QRZ | **no** |
@@ -153,6 +167,10 @@ En macOS se puede usar `cron` o `launchd`; por ejemplo, con `crontab -e`:
 ```cron
 0 * * * * /ruta/a/wavelog-sync/wavelog-sync.sh >> /ruta/a/wavelog-sync/estado/cron.log 2>&1
 ```
+
+En Windows, con el Programador de tareas: crear una tarea básica que ejecute
+`C:\ruta\a\wavelog-sync\wavelog-sync.bat` con la frecuencia deseada, sólo cuando el usuario
+inició sesión (así puede abrirse la ventana de login de QRZ si hace falta).
 
 Si la sesión de QRZ vence durante una corrida automática, se abre la ventana de login y la
 corrida espera hasta 10 minutos; si nadie se loguea, los QSOs quedan `pendiente` para QRZ.
