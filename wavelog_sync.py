@@ -17,7 +17,7 @@ Uso:
   python wavelog_sync.py --sin-qrz      # no sube a QRZ
   python wavelog_sync.py --sin-lda      # no sube a LdA
   python wavelog_sync.py --qrz-login    # login manual en QRZ (sólo la primera vez o si vence)
-  python wavelog_sync.py --qrz-corregir # corrige en QRZ grids/counties (también corre tras cada subida)
+  python wavelog_sync.py --qrz-corregir # corrige en QRZ grids/counties/DXCC (también corre tras cada subida)
 
 Estaciones (por station_id, nombre del perfil o indicativo; sin distinguir mayúsculas):
   python wavelog_sync.py --todas                          # todas (es el default)
@@ -451,10 +451,12 @@ def qrz_subir(cfg, ruta_adif, pendientes, registro, enviar=True):
 QRZ_AWARDS = {
     "grid": "Grid Squared Award",
     "county": "United States Counties Award",
+    "dxcc": "DX World Award",
 }
 QRZ_MAX_CORRECCIONES = 200  # tope de seguridad por award y corrida
 LBSHOW_RE = re.compile(r"lbshow\(\s*\d+\s*,\s*(\d+)\s*\)")
 SAVE_OK_RE = re.compile(r"'nmval'\s*:\s*'((?:[^'\\]|\\.)*)'")
+DXCC_RE = re.compile(r"^(.*\S)\s*\((\d+)\)$")  # "Russia (54)"
 
 
 def qrz_abrir_award(cfg, page, nombre):
@@ -531,19 +533,50 @@ def qrz_poner_county(page, valor):
     return True
 
 
+def qrz_poner_dxcc(page, valor):
+    """La entidad se elige en un diálogo modal de la página (#cpick, lista #dsel) que abre
+    cPick(2) y aplica countryPick(). Ésta además pisa grid, lat/lon y zonas CQ/ITU con los
+    valores por defecto de la entidad; se restauran los que tenía el QSO."""
+    m = DXCC_RE.match(valor)
+    if not m or m.group(2) == "0":
+        return False
+    nombre, dxcc = m.group(1), m.group(2)
+    campos = ["grid2", "lat2", "lon2", "cqz2", "ituz2"]
+    previos = {c: page.input_value(f"#{c}") for c in campos}
+    page.evaluate("cPick(2)")  # la primera vez descarga la lista de entidades y después abre el diálogo
+    page.locator("#cpick").wait_for(state="visible", timeout=30000)
+    page.select_option("#dsel", dxcc)
+    elegido = page.locator("#dsel option:checked").inner_text().lstrip("*").strip()
+    if elegido.lower() != nombre.lower():
+        page.evaluate("$('#cpick').dialog('close')")
+        raise RuntimeError(f"la entidad {dxcc} en QRZ es '{elegido}', no '{nombre}'")
+    page.evaluate("countryPick()")
+    page.locator("#cpick").wait_for(state="hidden", timeout=10000)
+    page.evaluate("""p => { for (const [c, v] of Object.entries(p)) document.getElementById(c).value = v;
+                          setDistance(); uiUpdate(); }""", previos)
+    return page.input_value("#dxcc2") == dxcc and all(page.input_value(f"#{c}") == v for c, v in previos.items())
+
+
+def qrz_corregible(tipo, err):
+    """En DXCC, si el corresponsal no cargó entidad (NON-DXCC) el error es suyo y no se toca."""
+    return not (tipo == "dxcc" and err["corresponsal"].upper().startswith("NON-DXCC"))
+
+
 def qrz_corregir_award(cfg, page, tipo, guardar):
     nombre = QRZ_AWARDS[tipo]
-    poner = qrz_poner_grid if tipo == "grid" else qrz_poner_county
+    poner = {"grid": qrz_poner_grid, "county": qrz_poner_county, "dxcc": qrz_poner_dxcc}[tipo]
     intentados, corregidos, fallidos = set(), 0, []
     if not guardar:
         # Sólo lista: QRZ aplica los cambios del formulario aunque después se cancele,
         # así que en modo prueba no se abre ningún QSO en edición.
         for err in qrz_errores_award(qrz_abrir_award(cfg, page, nombre)):
+            if not qrz_corregible(tipo, err):
+                continue
             print(f"  {tipo} a corregir {err['fecha']} {err['call']}: '{err['mio']}' -> '{err['corresponsal']}'")
         return corregidos, fallidos
     for _ in range(QRZ_MAX_CORRECCIONES):
         panel = qrz_abrir_award(cfg, page, nombre)
-        errores = [e for e in qrz_errores_award(panel) if e["id"] not in intentados]
+        errores = [e for e in qrz_errores_award(panel) if e["id"] not in intentados and qrz_corregible(tipo, e)]
         if not errores:
             break
         err = errores[0]
@@ -572,10 +605,10 @@ def qrz_corregir_award(cfg, page, tipo, guardar):
 
 
 def qrz_corregir(cfg, guardar=True):
-    """Corrige en QRZ los grids y counties que no coinciden con lo que cargó el corresponsal."""
+    """Corrige en QRZ los grids, counties y DXCC que no coinciden con lo que cargó el corresponsal."""
     from playwright.sync_api import sync_playwright
 
-    print(f"\nQRZ: {'corrigiendo' if guardar else 'listando (sin abrir ni editar)'} grids y counties...")
+    print(f"\nQRZ: {'corrigiendo' if guardar else 'listando (sin abrir ni editar)'} grids, counties y DXCC...")
     with sync_playwright() as p:
         ctx = None
         try:
@@ -603,7 +636,7 @@ def main():
     ap.add_argument("--qrz-login", action="store_true",
                     help="abre una ventana para loguearte en QRZ a mano y guarda la sesión")
     ap.add_argument("--qrz-corregir", action="store_true",
-                    help="sólo corrige en QRZ grids/counties que no coinciden (con --dry-run sólo los lista)")
+                    help="sólo corrige en QRZ grids/counties/DXCC que no coinciden (con --dry-run sólo los lista)")
     ap.add_argument("--todas", action="store_true", help="usa todas las estaciones (default)")
     ap.add_argument("--estacion", action="append", metavar="ID|NOMBRE|INDICATIVO",
                     help="sólo estas estaciones; repetible o separadas por coma")

@@ -1,7 +1,7 @@
 # wavelog-sync
 
 Sincroniza los QSOs nuevos de un log de [Wavelog](https://www.wavelog.org/) hacia
-**QRZ.com** y **LogDeArgentina (LdA)**, y después corrige en QRZ los grids y counties que no
+**QRZ.com** y **LogDeArgentina (LdA)**, y después corrige en QRZ los grids, counties y DXCC que no
 coinciden con lo que cargó el corresponsal.
 
 Está pensado para una cuenta **gratuita** de QRZ (sin API de logbook): la subida y las
@@ -17,8 +17,8 @@ correcciones se hacen manejando la web de QRZ con Playwright, con una sesión in
 3. **Compara** contra un registro local y arma un ADIF con lo que falta subir a cada destino.
 4. **Sube a LdA** por su API, un QSO por llamada (`subeqso2.php`).
 5. **Sube a QRZ** importando el ADIF desde la web del logbook.
-6. **Corrige en QRZ** (después de cada subida exitosa) los QSOs que los awards *Grid Squared*
-   y *United States Counties* marcan como "not eligible", poniendo el valor del corresponsal.
+6. **Corrige en QRZ** (después de cada subida exitosa) los QSOs que los awards *Grid Squared*,
+   *United States Counties* y *DX World* marcan como "not eligible", poniendo el valor del corresponsal.
 
 Sólo se consideran QSOs posteriores a `SYNC_DESDE`, para no subir el log histórico.
 
@@ -77,7 +77,7 @@ QRZ no lleva usuario ni contraseña en `.env`: el login es manual (ver abajo).
 ./wavelog-sync.sh --sin-lda           # sólo QRZ (y sus correcciones)
 ./wavelog-sync.sh --estaciones        # lista las estaciones de Wavelog
 ./wavelog-sync.sh --qrz-login         # abre una ventana para loguearse en QRZ
-./wavelog-sync.sh --qrz-corregir      # sólo corrige grids/counties en QRZ
+./wavelog-sync.sh --qrz-corregir      # sólo corrige grids/counties/DXCC en QRZ
 ./wavelog-sync.sh --qrz-corregir --dry-run   # lista lo que corregiría, sin tocar nada
 ./wavelog-sync.sh --reintentar-rechazados    # reintenta QSOs que un destino rechazó por datos
 ```
@@ -109,19 +109,22 @@ marcar *trust this device*) la ventana se cierra y la sesión queda guardada en 
 `estado/qrz_navegador`. Las corridas siguientes usan esa sesión con el navegador invisible.
 Si detectan que venció, vuelven a abrir la ventana de login y siguen solas.
 
-## QRZ: correcciones de grid y county
+## QRZ: correcciones de grid, county y DXCC
 
 Después de cada subida exitosa a QRZ (o con `--qrz-corregir`), para cada award:
 
-1. Logbook → *Awards* → se elige el libro → se despliega *Grid Squared Award* o
-   *United States Counties Award*.
+1. Logbook → *Awards* → se elige el libro → se despliega *Grid Squared Award*,
+   *United States Counties Award* o *DX World Award*.
 2. Si hay QSOs "not eligible", se abre el primero, *Edit* → *Receiver Info*, y se pone el
    valor que cargó el corresponsal (el grid se escribe; el county se elige en el buscador de
-   QRZ, sólo si hay una coincidencia exacta).
+   QRZ, sólo si hay una coincidencia exacta; la entidad DXCC se elige en el selector de
+   países, y se conservan el grid, lat/lon y zonas CQ/ITU que tenía el QSO).
 3. *Save Record*, de vuelta a *Awards*, y así hasta que no quede tabla de errores.
 
 A tener en cuenta:
 
+- En DXCC, los errores donde el corresponsal figura como *NON-DXCC (0)* no se tocan: el error
+  es de su lado y quedan como están.
 - Se pisa tu dato con el del corresponsal, tal como lo muestra QRZ (en grids suele ser de
   4 caracteres, así que se pierde precisión si tenías 6).
 - Los errores aparecen recién cuando el corresponsal confirma, así que en general se corrigen
