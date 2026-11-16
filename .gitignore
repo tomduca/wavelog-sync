@@ -3,3 +3,8 @@
 estado/
 exports/
 __pycache__/
+
+# Notas y memoria de Claude Code (sólo locales)
+CLAUDE.md
+CLAUDE.local.md
+.claude/
