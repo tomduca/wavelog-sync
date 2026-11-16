@@ -15,7 +15,9 @@ correcciones se hacen manejando la web de QRZ con Playwright, con una sesión in
    confirma); para corresponsales de Argentina, además, la provincia (`STATE`). Los incompletos
    se informan y se reintentan solos en la próxima corrida, cuando los completes en Wavelog.
 3. **Compara** contra un registro local y arma un ADIF con lo que falta subir a cada destino.
-4. **Sube a LdA** por su API, un QSO por llamada (`subeqso2.php`).
+4. **Sube a LdA** por su API, un QSO por llamada: la API ADIF con API key (`subeqso_l40.php`) si hay
+   `LDA_API_KEY`, o la vieja con usuario y contraseña (`subeqso2.php`), que también se usa de respaldo si
+   la ADIF no responde.
 5. **Sube a QRZ** importando el ADIF desde la web del logbook.
 6. **Corrige en QRZ** (después de cada subida exitosa) los QSOs que los awards *Grid Squared*,
    *United States Counties* y *DX World* marcan como "not eligible", poniendo el valor del corresponsal.
@@ -61,7 +63,8 @@ En los ejemplos de abajo, en Windows reemplazá `./wavelog-sync.sh` por `.\wavel
 | `WAVELOG_URL` | sí | URL base de Wavelog, la que precede a `/api/...`. Si tu instalación usa `index.php` en las URLs, incluilo: `http://mi-wavelog/index.php` |
 | `WAVELOG_API_KEY` | sí | Wavelog → menú de usuario → API Keys |
 | `SYNC_DESDE` | sí | Fecha/hora UTC desde la que se sincroniza, `AAAA-MM-DD HH:MM` |
-| `LDA_USER`, `LDA_PASS` | para LdA | Credenciales de LogDeArgentina |
+| `LDA_API_KEY` | para LdA (recomendado) | API key de LogDeArgentina (HOME > MI CUENTA) |
+| `LDA_USER`, `LDA_PASS` | para LdA sin key / respaldo | Credenciales de LogDeArgentina (API vieja) |
 | `LDA_MICALL` | sí | Indicativo propio. Se usa si un QSO no trae `STATION_CALLSIGN` y para el nombre del libro de QRZ |
 | `LDA_QSL_MSG` | no | Mensaje para la QSL de LdA |
 | `QRZ_LIBRO` | no | Nombre exacto del logbook de QRZ como aparece en *Awards*. Default: `<LDA_MICALL> Log` |
@@ -79,7 +82,7 @@ QRZ no lleva usuario ni contraseña en `.env`: el login es manual (ver abajo).
 ./wavelog-sync.sh --qrz-login         # abre una ventana para loguearse en QRZ
 ./wavelog-sync.sh --qrz-corregir      # sólo corrige grids/counties/DXCC en QRZ
 ./wavelog-sync.sh --qrz-corregir --dry-run   # lista lo que corregiría, sin tocar nada
-./wavelog-sync.sh --reintentar-rechazados    # reintenta QSOs que un destino rechazó por datos
+./wavelog-sync.sh --reintentar-rechazados    # fuerza reintentar rechazados aunque no se hayan modificado
 ```
 
 ### Elegir estaciones
@@ -141,7 +144,7 @@ El registro local (`estado/registro.json`) guarda, por QSO y por destino, uno de
 |---|---|---|
 | `pendiente` | no se intentó o falló por algo transitorio (red, navegador, sesión) | se reintenta |
 | `ok` | subido; incluye "duplicado" informado por el destino | no se toca |
-| `rechazado` | el destino lo rechazó por datos | sólo con `--reintentar-rechazados` |
+| `rechazado` | el destino lo rechazó por datos | sí, solo, cuando el QSO se corrige en Wavelog; o forzado con `--reintentar-rechazados` |
 
 Cada destino es independiente: si falla LdA, la próxima corrida reintenta LdA junto con los
 QSOs nuevos, y a QRZ le sube sólo lo que le falta. QRZ no informa resultado por QSO (procesa

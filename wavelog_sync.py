@@ -7,7 +7,7 @@ Flujo:
   2. Valida los campos obligatorios de cada QSO.
   3. Compara contra el registro local (estado/registro.json) y arma un único ADIF
      con los QSOs válidos que todavía no se subieron a algún destino.
-  4. Sube a LdA por API (un QSO por llamada) y a QRZ por Playwright (cuenta gratuita, sin API).
+  4. Sube a LdA por API (un QSO por llamada; ADIF + API key, o la vieja con usuario/contraseña) y a QRZ por Playwright (cuenta gratuita, sin API).
   5. Guarda en el registro el resultado por QSO y por destino.
 
 Uso:
@@ -27,6 +27,7 @@ Estaciones (por station_id, nombre del perfil o indicativo; sin distinguir mayú
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -73,6 +74,7 @@ def cargar_config():
         "wavelog_url": req("WAVELOG_URL").rstrip("/"),
         "wavelog_key": req("WAVELOG_API_KEY"),
         "desde": desde_dt,
+        "lda_key": os.getenv("LDA_API_KEY", "").strip(),
         "lda_user": os.getenv("LDA_USER", "").strip(),
         "lda_pass": os.getenv("LDA_PASS", "").strip(),
         "lda_micall": os.getenv("LDA_MICALL", "").strip().upper(),
@@ -185,8 +187,13 @@ def faltantes(c):
 # --------------------------------------------------------------------------- Wavelog
 
 def wavelog_estaciones(cfg):
-    r = requests.get(f"{cfg['wavelog_url']}/api/station_info/{cfg['wavelog_key']}", timeout=30)
-    r.raise_for_status()
+    try:
+        r = requests.get(f"{cfg['wavelog_url']}/api/station_info/{cfg['wavelog_key']}", timeout=30)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        # Sin el detalle de la excepción: la URL lleva la API key.
+        sys.exit(f"Wavelog: no se pudo consultar {cfg['wavelog_url']} ({type(e).__name__}). "
+                 "¿Estás en la misma red que el servidor?")
     return r.json()
 
 
@@ -263,30 +270,113 @@ def guardar_registro(reg):
     tmp.replace(REGISTRO_PATH)
 
 
-def marcar(entrada, destino, estado, mensaje=""):
+def marcar(entrada, destino, estado, mensaje="", campos=None):
     entrada[destino] = {
         "estado": estado,
         "mensaje": mensaje,
         "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    if campos is not None:
+        entrada[destino]["huella"] = huella(destino, campos)
+
+
+# Campos que Wavelog cambia solo (estados de QSL y de subida a otros servicios): no cuentan
+# como modificación del QSO.
+VOLATIL_RE = re.compile(r"QSL|UPLOAD|DOWNLOAD|LOTW|EQSL|CLUBLOG|HRDLOG|QRZCOM|DCL")
+
+
+def huella(destino, c):
+    """Resumen de los datos del QSO que importan para el destino. Si cambia respecto de la
+    huella guardada, un QSO rechazado se vuelve a intentar solo (se corrigió en Wavelog)."""
+    if destino == "lda":
+        datos = {k: c.get(k, "") for k in (*LDA_CAMPOS_ADIF, "MODE", "SUBMODE", "PROP_MODE")}
+    else:  # QRZ recibe el registro ADIF completo
+        datos = {k: v for k, v in c.items() if not VOLATIL_RE.search(k)}
+    return hashlib.sha1(json.dumps(datos, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def rechazado_sin_cambios(entrada, destino, c):
+    """Rechazado y con los mismos datos que cuando se rechazó (sin huella = registro viejo:
+    no se sabe si cambió, se trata como sin cambios)."""
+    d = entrada[destino]
+    return d["estado"] == RECHAZADO and d.get("huella") in (None, huella(destino, c))
 
 
 # --------------------------------------------------------------------------- LdA
 
-LDA_URL = "https://www.lda.ar/php/subeqso2.php"
+# Doc: https://lda.ar/php/desarrolladores/api_desarrolladores.html
+LDA_URL_ADIF = "https://www.lda.ar/php/subeqso_l40.php"  # nueva: POST ADIF + API key (si hay LDA_API_KEY)
+LDA_URL = "https://www.lda.ar/php/subeqso2.php"          # vieja: GET con usuario y contraseña
 LDA_OK = ("Guardado OK", "QSO duplicado", "QSO Confirmado")
+# X-LdA-Status de la API ADIF que significan que el QSO quedó en LdA.
+LDA_ADIF_OK = ("saved", "confirmed", "duplicate")
+# Códigos de error que no dependen del QSO sino de la cuenta/clave: se corta la subida.
+LDA_ADIF_CORTAR = ("AUTH", "ACCOUNT_GRID")
+# Códigos de error por datos del QSO: no se reintenta automáticamente.
+LDA_ADIF_RECHAZO = ("BAD_ADIF", "MISSING_FIELD", "BAD_CALL", "BAD_BAND", "BAD_MODE",
+                    "BAD_DATE", "BAD_TIME", "CALL_NOT_ALLOWED")
+# Propagaciones que acepta LdA (ADIF PROP_MODE -> LdA); las demás no se mandan.
+LDA_PROP = {"ECH": "ECHO", "ECHO": "ECHO", "EME": "EME", "INTERNET": "INTERNET",
+            "MS": "MS", "RPT": "RPT", "SAT": "SAT"}
+# Modos con otro nombre en LdA (admite CW, SSB, RTTY, BPSK, BPSK31, FT4, FT8, DV, SSTV, ATV, FM).
+LDA_MODOS = {"PSK31": "BPSK31", "PSK": "BPSK"}
+# Campos del QSO que se mandan en el ADIF (sólo ASCII; sin textos libres como NAME o QTH).
+LDA_CAMPOS_ADIF = ("CALL", "QSO_DATE", "TIME_ON", "BAND", "FREQ", "STATION_CALLSIGN",
+                   "RST_SENT", "RST_RCVD", "GRIDSQUARE", "SAT_NAME")
 
 
 def lda_modo(c):
     # ADIF guarda FT4 como MODE=MFSK/SUBMODE=FT4, PSK31 como MODE=PSK/SUBMODE=PSK31, etc.
     modo = c.get("MODE", "").upper()
     if modo in ("MFSK", "PSK") and c.get("SUBMODE"):
-        return c["SUBMODE"].upper()
-    return modo
+        modo = c["SUBMODE"].upper()
+    return LDA_MODOS.get(modo, modo)
+
+
+def lda_prop(c):
+    return LDA_PROP.get(c.get("PROP_MODE", "").strip().upper(), "")
+
+
+def lda_adif(cfg, c):
+    """ADIF de un QSO para LdA: campos básicos, modo normalizado y propagación admitida."""
+    campos = {k: c[k] for k in LDA_CAMPOS_ADIF if c.get(k)}
+    campos["CALL"] = campos.get("CALL", "").upper()
+    campos["BAND"] = campos.get("BAND", "").lower()
+    campos["TIME_ON"] = campos.get("TIME_ON", "")[:4]
+    campos["MODE"] = lda_modo(c)
+    if lda_prop(c):
+        campos["PROP_MODE"] = lda_prop(c)
+    if cfg["lda_qsl_msg"]:
+        campos["QSLMSG"] = cfg["lda_qsl_msg"]
+    return " ".join(f"<{k}:{len(v.encode('utf-8'))}>{v}" for k, v in campos.items()) + " <EOR>"
+
+
+def lda_subir_qso_adif(cfg, c):
+    """API ADIF con API key. Devuelve (estado, mensaje, cortar)."""
+    datos = {"key": cfg["lda_key"], "ADIF": lda_adif(cfg, c), "station": cfg["lda_micall"]}
+    try:
+        r = requests.post(LDA_URL_ADIF, data=datos, timeout=30)
+    except requests.RequestException as e:
+        return PENDIENTE, f"error de red: {type(e).__name__}", False
+    status = r.headers.get("X-LdA-Status", "").strip().lower()
+    if r.status_code == 404 and not status:
+        # Documentada pero todavía no publicada (404 al 2026-11-16): lda_subir usa la vieja.
+        return None, "API ADIF no disponible (HTTP 404)", True
+    cuerpo = r.text.strip().splitlines()
+    if r.status_code == 200 and status in LDA_ADIF_OK:
+        return OK, status, False
+    # Error: cuerpo "ERROR CODIGO" y en la segunda línea el motivo.
+    codigo = cuerpo[0].split()[-1].upper() if cuerpo and cuerpo[0].upper().startswith("ERROR") else ""
+    msg = f"HTTP {r.status_code} {status or 'sin X-LdA-Status'}: " + " / ".join(l.strip() for l in cuerpo[:2])[:300]
+    if codigo in LDA_ADIF_CORTAR:
+        return PENDIENTE, msg, True
+    if codigo in LDA_ADIF_RECHAZO:
+        return RECHAZADO, msg, False
+    return PENDIENTE, msg, False  # 5xx, respuesta inesperada, etc.: se reintenta
 
 
 def lda_subir_qso(cfg, c):
-    """Devuelve (estado, mensaje)."""
+    """API vieja (GET con usuario y contraseña). Devuelve (estado, mensaje, cortar)."""
     micall = c.get("STATION_CALLSIGN", "").upper() or cfg["lda_micall"]
     params = {
         "user": cfg["lda_user"],
@@ -299,8 +389,8 @@ def lda_subir_qso(cfg, c):
         "hora": c.get("TIME_ON", "")[:4],
         "rst": c.get("RST_SENT", ""),
     }
-    if c.get("PROP_MODE", "").upper() == "SAT":  # LdA sólo admite SAT como propagación
-        params["prop"] = "SAT"
+    if lda_prop(c):
+        params["prop"] = lda_prop(c)
     if cfg["lda_qsl_msg"]:
         params["x_qslMSG"] = cfg["lda_qsl_msg"]
     try:
@@ -308,25 +398,40 @@ def lda_subir_qso(cfg, c):
         r.raise_for_status()
     except requests.RequestException as e:
         # Sin el detalle de la URL: lleva la contraseña en la query string.
-        return PENDIENTE, f"error de red: {type(e).__name__}"
+        return PENDIENTE, f"error de red: {type(e).__name__}", False
     texto = re.sub(r"<[^>]+>", " ", r.text)
     texto = " ".join(texto.split())
     if any(ok in texto for ok in LDA_OK):
-        return OK, texto
-    return RECHAZADO, texto or "respuesta vacía"
+        return OK, texto, False
+    return RECHAZADO, texto or "respuesta vacía", False
 
 
 def lda_subir(cfg, pendientes, registro):
-    if not (cfg["lda_user"] and cfg["lda_pass"]):
-        print("LdA: faltan LDA_USER/LDA_PASS en .env, se omite.")
+    hay_vieja = bool(cfg["lda_user"] and cfg["lda_pass"])
+    if cfg["lda_key"]:
+        subir, api = lda_subir_qso_adif, "API ADIF"
+    elif hay_vieja:
+        subir, api = lda_subir_qso, "API subeqso2 (usuario/contraseña)"
+    else:
+        print("LdA: falta LDA_API_KEY (o LDA_USER/LDA_PASS) en .env, se omite.")
         return
-    print(f"LdA: subiendo {len(pendientes)} QSOs...")
+    print(f"LdA: subiendo {len(pendientes)} QSOs por {api}...")
     for q in pendientes:
         clave = clave_qso(q["campos"])
-        estado, msg = lda_subir_qso(cfg, q["campos"])
-        marcar(registro["qsos"][clave], "lda", estado, msg)
+        estado, msg, cortar = subir(cfg, q["campos"])
+        if estado is None:  # la API ADIF no está publicada
+            if not hay_vieja:
+                print(f"LdA: {msg} y no hay LDA_USER/LDA_PASS para la API vieja; se omite.")
+                return
+            print(f"LdA: {msg}; sigo con la API subeqso2 (usuario/contraseña).")
+            subir = lda_subir_qso
+            estado, msg, cortar = subir(cfg, q["campos"])
+        marcar(registro["qsos"][clave], "lda", estado, msg, q["campos"])
         guardar_registro(registro)
         print(f"  {clave}: {estado} - {msg}")
+        if cortar:
+            print("LdA: error de cuenta/clave, no se sigue subiendo (los QSOs quedan pendientes).")
+            return
         time.sleep(0.5)
 
 
@@ -437,7 +542,7 @@ def qrz_subir(cfg, ruta_adif, pendientes, registro, enviar=True):
                 ctx.close()
 
     for q in pendientes:
-        marcar(registro["qsos"][clave_qso(q["campos"])], "qrz", estado, msg)
+        marcar(registro["qsos"][clave_qso(q["campos"])], "qrz", estado, msg, q["campos"])
     guardar_registro(registro)
     print(f"  {estado} - {msg}")
     return estado == OK
@@ -691,23 +796,22 @@ def main():
 
     def pendiente_en(q, destino):
         entrada = registro["qsos"].get(clave_qso(q["campos"]))
-        return entrada is None or entrada[destino]["estado"] in reintentables
+        if entrada is None or entrada[destino]["estado"] in reintentables:
+            return True
+        # Rechazado pero corregido en Wavelog desde entonces: se reintenta solo.
+        return entrada[destino]["estado"] == RECHAZADO and not rechazado_sin_cambios(entrada, destino, q["campos"])
 
     a_procesar = [q for q in validos if any(pendiente_en(q, d) for d in activos)]
 
     print(f"\nDesde {cfg['desde']:%Y-%m-%d %H:%M} UTC: {len(validos)} QSOs válidos, "
-          f"{len(incompletos)} incompletos, {len(a_procesar)} para subir.")
-    if incompletos:
-        print("\nIncompletos (se reintentan en la próxima corrida cuando los completes en Wavelog):")
-        for c, falta in sorted(incompletos, key=lambda x: (x[0].get("QSO_DATE", ""), x[0].get("TIME_ON", ""))):
-            print(f"  {c.get('QSO_DATE','?')} {c.get('TIME_ON','?')[:4]} {c.get('CALL','?'):<12} "
-                  f"falta: {', '.join(falta)}")
+          f"{len(incompletos)} incompletos (detalle al final), {len(a_procesar)} para subir.")
 
     if not a_procesar:
         print("\nNada nuevo para subir.")
         if not args.dry_run:
             registro["ultima_ejecucion"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             guardar_registro(registro)
+        imprimir_no_subidos(incompletos, validos, registro, activos)
         return
 
     sello = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -717,6 +821,7 @@ def main():
 
     if args.dry_run:
         print("Dry-run: no se sube nada ni se modifica el registro.")
+        imprimir_no_subidos(incompletos, validos, registro, activos)
         return
 
     ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -754,6 +859,36 @@ def main():
             est = registro["qsos"][clave_qso(q["campos"])][d]["estado"]
             conteo[est] = conteo.get(est, 0) + 1
         print(f"  {d.upper()}: " + ", ".join(f"{k}={v}" for k, v in sorted(conteo.items())))
+    imprimir_no_subidos(incompletos, validos, registro, activos)
+
+
+def _orden_qso(c):
+    return c.get("QSO_DATE", ""), c.get("TIME_ON", "")
+
+
+def imprimir_no_subidos(incompletos, validos, registro, activos):
+    """Al final de la corrida: QSOs que no se subieron por datos (incompletos en Wavelog
+    o rechazados por un destino), para que se puedan corregir."""
+    rechazados = []
+    for q in validos:
+        entrada = registro["qsos"].get(clave_qso(q["campos"]))
+        for d in activos:
+            if entrada and entrada[d]["estado"] == RECHAZADO:
+                nota = "" if rechazado_sin_cambios(entrada, d, q["campos"]) else " (modificado en Wavelog: se reintenta)"
+                rechazados.append((q["campos"], d, entrada[d]["mensaje"] + nota))
+    if not (incompletos or rechazados):
+        return
+    print("\nQSOs no subidos por datos:")
+    if incompletos:
+        print(f"  Incompletos en Wavelog ({len(incompletos)}; se suben solos cuando los completes):")
+        for c, falta in sorted(incompletos, key=lambda x: _orden_qso(x[0])):
+            print(f"    {c.get('QSO_DATE','?')} {c.get('TIME_ON','?')[:4]} {c.get('CALL','?'):<12} "
+                  f"{c.get('BAND','?'):<5} {c.get('MODE','?'):<5} falta: {', '.join(falta)}")
+    if rechazados:
+        print(f"  Rechazados por el destino ({len(rechazados)}; se reintentan solos cuando los corrijas en Wavelog):")
+        for c, d, msg in sorted(rechazados, key=lambda x: _orden_qso(x[0])):
+            print(f"    {c.get('QSO_DATE','?')} {c.get('TIME_ON','?')[:4]} {c.get('CALL','?'):<12} "
+                  f"{d.upper()}: {msg}")
 
 
 if __name__ == "__main__":
