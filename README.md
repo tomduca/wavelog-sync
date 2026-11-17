@@ -15,7 +15,7 @@ correcciones se hacen manejando la web de QRZ con Playwright, con una sesión in
    confirma); para corresponsales de Argentina, además, la provincia (`STATE`). Los incompletos
    se informan y se reintentan solos en la próxima corrida, cuando los completes en Wavelog.
 3. **Compara** contra un registro local y arma un ADIF con lo que falta subir a cada destino.
-4. **Sube a LdA** por su API, un QSO por llamada: la API ADIF con API key (`subeqso_l40.php`) si hay
+4. **Sube a LdA** por su API, un QSO por llamada: la API ADIF con API key (`subeqso_l40_api.php`) si hay
    `LDA_API_KEY`, o la vieja con usuario y contraseña (`subeqso2.php`), que también se usa de respaldo si
    la ADIF no responde.
 5. **Sube a QRZ** importando el ADIF desde la web del logbook.

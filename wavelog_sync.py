@@ -305,7 +305,7 @@ def rechazado_sin_cambios(entrada, destino, c):
 # --------------------------------------------------------------------------- LdA
 
 # Doc: https://lda.ar/php/desarrolladores/api_desarrolladores.html
-LDA_URL_ADIF = "https://www.lda.ar/php/subeqso_l40.php"  # nueva: POST ADIF + API key (si hay LDA_API_KEY)
+LDA_URL_ADIF = "https://www.lda.ar/php/subeqso_l40_api.php"  # nueva: POST ADIF + API key (si hay LDA_API_KEY)
 LDA_URL = "https://www.lda.ar/php/subeqso2.php"          # vieja: GET con usuario y contraseña
 LDA_OK = ("Guardado OK", "QSO duplicado", "QSO Confirmado")
 # X-LdA-Status de la API ADIF que significan que el QSO quedó en LdA.
@@ -360,7 +360,7 @@ def lda_subir_qso_adif(cfg, c):
         return PENDIENTE, f"error de red: {type(e).__name__}", False
     status = r.headers.get("X-LdA-Status", "").strip().lower()
     if r.status_code == 404 and not status:
-        # Documentada pero todavía no publicada (404 al 2026-11-16): lda_subir usa la vieja.
+        # Si la API ADIF no está (404), lda_subir usa la vieja.
         return None, "API ADIF no disponible (HTTP 404)", True
     cuerpo = r.text.strip().splitlines()
     if r.status_code == 200 and status in LDA_ADIF_OK:
