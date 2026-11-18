@@ -21,9 +21,12 @@ if [[ ! -f "$SELLO" || "$(cat "$SELLO")" != "$hash_req" ]]; then
     echo "Instalando dependencias..."
     "$PY" -m pip install --quiet --upgrade pip
     "$PY" -m pip install --quiet -r requirements.txt
-    "$PY" -m playwright install chromium
     echo "$hash_req" > "$SELLO"
 fi
+
+# Siempre: no descarga nada si Chromium ya está, y lo repone si se borró la caché
+# (~/Library/Caches/ms-playwright) o si una versión nueva de Playwright pide otro.
+"$PY" -m playwright install chromium
 
 if [[ ! -f .env ]]; then
     echo "Falta .env: copiá .env.example a .env y completalo." >&2

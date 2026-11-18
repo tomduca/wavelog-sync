@@ -27,9 +27,12 @@ if errorlevel 1 (
     echo Instalando dependencias...
     "%PY%" -m pip install --quiet --upgrade pip || exit /b 1
     "%PY%" -m pip install --quiet -r requirements.txt || exit /b 1
-    "%PY%" -m playwright install chromium || exit /b 1
     "%PY%" -c "%HASHPY%" guardar "%SELLO%"
 )
+
+rem Siempre: no descarga nada si Chromium ya esta, y lo repone si se borro la cache
+rem o si una version nueva de Playwright pide otro.
+"%PY%" -m playwright install chromium || exit /b 1
 
 if not exist ".env" (
     echo Falta .env: copia .env.example a .env y completalo. 1>&2
