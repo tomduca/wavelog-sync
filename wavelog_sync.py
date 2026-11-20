@@ -811,6 +811,9 @@ def main():
         if not args.dry_run:
             registro["ultima_ejecucion"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
             guardar_registro(registro)
+        if "qrz" in activos:
+            # Aunque no haya QSOs nuevos, pueden haber llegado confirmaciones con datos a corregir.
+            qrz_corregir(cfg, guardar=not args.dry_run)
         imprimir_no_subidos(incompletos, validos, registro, activos)
         return
 
@@ -821,6 +824,8 @@ def main():
 
     if args.dry_run:
         print("Dry-run: no se sube nada ni se modifica el registro.")
+        if "qrz" in activos:
+            qrz_corregir(cfg, guardar=False)
         imprimir_no_subidos(incompletos, validos, registro, activos)
         return
 
@@ -846,8 +851,10 @@ def main():
             if len(pend_qrz) != len(a_procesar):
                 ruta_qrz = ruta.with_name(ruta.stem + "_qrz.adi")
                 escribir_adif(pend_qrz, ruta_qrz, f"Pendientes para QRZ - {len(pend_qrz)} QSOs")
-            if qrz_subir(cfg, ruta_qrz, pend_qrz, registro):
-                qrz_corregir(cfg)
+            qrz_subir(cfg, ruta_qrz, pend_qrz, registro)
+        # Siempre, haya salido o no la subida: las correcciones son de QSOs ya confirmados en QRZ.
+        # Lo recién subido QRZ lo procesa en segundo plano; si aparece tarde, se corrige en la próxima corrida.
+        qrz_corregir(cfg)
 
     registro["ultima_ejecucion"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     guardar_registro(registro)
